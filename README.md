@@ -74,8 +74,5 @@ Murilo da Silva basto | RM565445
 <li>Status visual do ambiente</li>
 <li>Conecta-se diretamente ao broker MQTT</li>
 
-<h1>Recrie!</h1>
-<p>Abaixo está todo código que foi utilizado </p>
 
-<h3>Dashboards HTML e Js</h3>
 

@@ -4,22 +4,28 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Dashboard ESP32 + MQ2</title>
+  <!-- Biblioteca Chart.js usada para desenhar os gráficos -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+  <!-- Estilos locais -->
   <link rel="stylesheet" href="/styles.css">
+  <!-- Fonte Inter do Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
 </head>
 <body>
   <div class="container">
+    <!-- Cabeçalho: título e indicador de status do MQTT -->
     <header>
       <h1>📊 Dashboard</h1>
       <div class="status-badge">
+        <!-- `#mqtt-dot` e `#mqtt-text` são atualizados via JS para mostrar conexão MQTT -->
         <span class="status-dot disconnected" id="mqtt-dot"></span>
         <span id="mqtt-text">Desconectado</span>
       </div>
     </header>
 
+    <!-- Cartões com valores principais (ADC, PPM, Status) -->
     <div class="cards">
       <div class="card gas">
         <div class="card-title">Valor ADC</div>
@@ -40,12 +46,14 @@
       </div>
     </div>
 
+    <!-- Botões de controle do frontend -->
     <div class="controls">
       <button class="btn btn-primary" onclick="refresh()">🔄 Atualizar</button>
       <button class="btn btn-success" onclick="exportCSV()">📥 Exportar CSV</button>
       <button class="btn btn-danger" onclick="clearHistory()">🗑️ Limpar Histórico</button>
     </div>
 
+    <!-- Área dos gráficos (PPM e ADC) -->
     <div class="charts-grid">
       <div class="chart-container">
         <h3>📈 PPM ao Longo do Tempo</h3>
@@ -57,6 +65,7 @@
       </div>
     </div>
 
+    <!-- Tabela com histórico das últimas leituras -->
     <div class="table-container">
       <h3>📋 Histórico de Medições (últimas 30)</h3>
       <table>
@@ -71,40 +80,53 @@
   </div>
 
   <script>
-    let ws = null;
-    let history = [];
-    let charts = {};
+    // Variáveis principais em escopo de script
+    let ws = null;        // conexão WebSocket com o servidor
+    let history = [];     // histórico local em memória (clonado do servidor)
+    let charts = {};      // referências aos objetos Chart.js
 
+    // Abre/gerencia a conexão WebSocket com o servidor (mesmo host da página)
     function connectWS(){
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       ws = new WebSocket(`${protocol}//${location.host}`);
 
+      // Ao abrir a conexão, atualiza indicador visual
       ws.onopen = () => { console.log('WebSocket aberto'); updateMQTTStatus('connected'); };
+
+      // Recebe mensagens do servidor e roteia por tipo
       ws.onmessage = e => {
         const msg = JSON.parse(e.data);
-        if(msg.type === 'data') updateData(msg.data);
-        else if(msg.type === 'init'){ history = msg.data.history || []; updateData(msg.data); }
-        else if(msg.type === 'mqtt') updateMQTTStatus(msg.status);
-        else if(msg.type === 'cleared'){ history = []; updateTable(); updateCharts(); }
+        if(msg.type === 'data') updateData(msg.data);                          // nova leitura
+        else if(msg.type === 'init'){ history = msg.data.history || []; updateData(msg.data); } // estado inicial
+        else if(msg.type === 'mqtt') updateMQTTStatus(msg.status);             // status de conexão MQTT
+        else if(msg.type === 'cleared'){ history = []; updateTable(); updateCharts(); } // histórico limpo
       };
+
+      // Erro/fechamento: tenta reconectar em 3s e atualiza indicador
       ws.onerror = () => updateMQTTStatus('disconnected');
       ws.onclose = () => { updateMQTTStatus('disconnected'); setTimeout(connectWS,3000); };
     }
 
+    // Atualiza os elementos visuais com os dados mais recentes
     function updateData(data){
       document.getElementById('val-gas').textContent = data.gas;
       document.getElementById('val-ppm').textContent = (data.ppm||0).toFixed(2);
       document.getElementById('val-status').textContent = data.status;
       document.getElementById('val-time').textContent = new Date(data.timestamp).toLocaleTimeString('pt-BR');
+
+      // Mantém histórico local (mesmo limite do servidor)
       history.push(data); if(history.length>200) history.shift();
       updateCharts(); updateTable();
     }
 
+    // Atualiza o indicador visual de conexão MQTT
     function updateMQTTStatus(st){
       const dot = document.getElementById('mqtt-dot'); const t = document.getElementById('mqtt-text');
-      if(st === 'connected'){ dot.className='status-dot connected'; t.textContent='MQTT Conectado'; } else { dot.className='status-dot disconnected'; t.textContent='MQTT Desconectado'; }
+      if(st === 'connected'){ dot.className='status-dot connected'; t.textContent='MQTT Conectado'; }
+      else { dot.className='status-dot disconnected'; t.textContent='MQTT Desconectado'; }
     }
 
+    // Renderiza a tabela de histórico (últimos 30 registros)
     function updateTable(){
       const tbody = document.getElementById('history-body');
       if(history.length === 0){ tbody.innerHTML = '<tr><td colspan="5">Nenhum dado no histórico</td></tr>'; return; }
@@ -114,6 +136,7 @@
       }).join('');
     }
 
+    // Inicializa os gráficos Chart.js (PPM e ADC)
     function initCharts(){
       const ppmCtx = document.getElementById('chart-ppm').getContext('2d');
       charts.ppm = new Chart(ppmCtx,{type:'line',data:{labels:[],datasets:[{label:'PPM',data:[],borderColor:'#f59e0b',backgroundColor:'rgba(245,158,11,0.1)',fill:true,tension:0.4}]},options:{plugins:{legend:{display:false}}}});
@@ -121,6 +144,7 @@
       charts.adc = new Chart(adcCtx,{type:'line',data:{labels:[],datasets:[{label:'ADC',data:[],borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,0.1)',fill:true,tension:0.4}]},options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,max:4095}}}});
     }
 
+    // Atualiza dados dos gráficos com os últimos pontos do histórico
     function updateCharts(){
       if(history.length===0) return;
       const last = history.slice(-20);
@@ -129,10 +153,12 @@
       charts.adc.data.labels = labels; charts.adc.data.datasets[0].data = last.map(h=>h.gas||0); charts.adc.update('none');
     }
 
+    // Funções utilitárias de interface: refresh, exportar CSV e limpar histórico
     function refresh(){ fetch('/api/current').then(r=>r.json()).then(d=>updateData(d)); }
     function exportCSV(){ if(history.length===0){ alert('Nenhum dado'); return; } let csv='Horário,ADC,PPM,Status\n'; history.forEach(h=>{ csv+=`${new Date(h.timestamp).toLocaleString('pt-BR')},${h.gas},${(h.ppm||0).toFixed(2)},${h.status}\n`; }); const blob=new Blob([csv],{type:'text/csv'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`esp32-dados-${Date.now()}.csv`; a.click(); }
     function clearHistory(){ if(confirm('Tem certeza?')) fetch('/api/clear',{method:'POST'}).then(()=>{ history=[]; updateTable(); updateCharts(); }); }
 
+    // Inicialização ao carregar a página: configura gráficos e inicia WS
     document.addEventListener('DOMContentLoaded',()=>{ initCharts(); connectWS(); });
   </script>
 </body>
