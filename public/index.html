@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dashboard ESP32 + MQ2</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📊 Dashboard</h1>
+      <div class="status-badge">
+        <span class="status-dot disconnected" id="mqtt-dot"></span>
+        <span id="mqtt-text">Desconectado</span>
+      </div>
+    </header>
+
+    <div class="cards">
+      <div class="card gas">
+        <div class="card-title">Valor ADC</div>
+        <div class="card-value" id="val-gas">0</div>
+        <div class="card-unit">0 - 4095</div>
+      </div>
+
+      <div class="card ppm">
+        <div class="card-title">Concentração (PPM)</div>
+        <div class="card-value" id="val-ppm">0.00</div>
+        <div class="card-unit">partes por milhão</div>
+      </div>
+
+      <div class="card status">
+        <div class="card-title">Status</div>
+        <div class="card-value" id="val-status">AGUARDANDO</div>
+        <div class="card-unit" id="val-time">--:--:--</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="btn btn-primary" onclick="refresh()">🔄 Atualizar</button>
+      <button class="btn btn-success" onclick="exportCSV()">📥 Exportar CSV</button>
+      <button class="btn btn-danger" onclick="clearHistory()">🗑️ Limpar Histórico</button>
+    </div>
+
+    <div class="charts-grid">
+      <div class="chart-container">
+        <h3>📈 PPM ao Longo do Tempo</h3>
+        <canvas id="chart-ppm"></canvas>
+      </div>
+      <div class="chart-container">
+        <h3>📊 Valor ADC ao Longo do Tempo</h3>
+        <canvas id="chart-adc"></canvas>
+      </div>
+    </div>
+
+    <div class="table-container">
+      <h3>📋 Histórico de Medições (últimas 30)</h3>
+      <table>
+        <thead>
+          <tr><th>#</th><th>Horário</th><th>ADC</th><th>PPM</th><th>Status</th></tr>
+        </thead>
+        <tbody id="history-body">
+          <tr><td colspan="5">Aguardando dados do ESP32...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let ws = null;
+    let history = [];
+    let charts = {};
+
+    function connectWS(){
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${protocol}//${location.host}`);
+
+      ws.onopen = () => { console.log('WebSocket aberto'); updateMQTTStatus('connected'); };
+      ws.onmessage = e => {
+        const msg = JSON.parse(e.data);
+        if(msg.type === 'data') updateData(msg.data);
+        else if(msg.type === 'init'){ history = msg.data.history || []; updateData(msg.data); }
+        else if(msg.type === 'mqtt') updateMQTTStatus(msg.status);
+        else if(msg.type === 'cleared'){ history = []; updateTable(); updateCharts(); }
+      };
+      ws.onerror = () => updateMQTTStatus('disconnected');
+      ws.onclose = () => { updateMQTTStatus('disconnected'); setTimeout(connectWS,3000); };
+    }
+
+    function updateData(data){
+      document.getElementById('val-gas').textContent = data.gas;
+      document.getElementById('val-ppm').textContent = (data.ppm||0).toFixed(2);
+      document.getElementById('val-status').textContent = data.status;
+      document.getElementById('val-time').textContent = new Date(data.timestamp).toLocaleTimeString('pt-BR');
+      history.push(data); if(history.length>200) history.shift();
+      updateCharts(); updateTable();
+    }
+
+    function updateMQTTStatus(st){
+      const dot = document.getElementById('mqtt-dot'); const t = document.getElementById('mqtt-text');
+      if(st === 'connected'){ dot.className='status-dot connected'; t.textContent='MQTT Conectado'; } else { dot.className='status-dot disconnected'; t.textContent='MQTT Desconectado'; }
+    }
+
+    function updateTable(){
+      const tbody = document.getElementById('history-body');
+      if(history.length === 0){ tbody.innerHTML = '<tr><td colspan="5">Nenhum dado no histórico</td></tr>'; return; }
+      tbody.innerHTML = history.slice(-30).reverse().map((item,idx)=>{
+        const time = new Date(item.timestamp).toLocaleTimeString('pt-BR');
+        return `<tr><td>#${history.length-idx}</td><td>${time}</td><td>${item.gas}</td><td>${(item.ppm||0).toFixed(2)}</td><td>${item.status}</td></tr>`;
+      }).join('');
+    }
+
+    function initCharts(){
+      const ppmCtx = document.getElementById('chart-ppm').getContext('2d');
+      charts.ppm = new Chart(ppmCtx,{type:'line',data:{labels:[],datasets:[{label:'PPM',data:[],borderColor:'#f59e0b',backgroundColor:'rgba(245,158,11,0.1)',fill:true,tension:0.4}]},options:{plugins:{legend:{display:false}}}});
+      const adcCtx = document.getElementById('chart-adc').getContext('2d');
+      charts.adc = new Chart(adcCtx,{type:'line',data:{labels:[],datasets:[{label:'ADC',data:[],borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,0.1)',fill:true,tension:0.4}]},options:{plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,max:4095}}}});
+    }
+
+    function updateCharts(){
+      if(history.length===0) return;
+      const last = history.slice(-20);
+      const labels = last.map(h=>new Date(h.timestamp).toLocaleTimeString('pt-BR'));
+      charts.ppm.data.labels = labels; charts.ppm.data.datasets[0].data = last.map(h=>h.ppm||0); charts.ppm.update('none');
+      charts.adc.data.labels = labels; charts.adc.data.datasets[0].data = last.map(h=>h.gas||0); charts.adc.update('none');
+    }
+
+    function refresh(){ fetch('/api/current').then(r=>r.json()).then(d=>updateData(d)); }
+    function exportCSV(){ if(history.length===0){ alert('Nenhum dado'); return; } let csv='Horário,ADC,PPM,Status\n'; history.forEach(h=>{ csv+=`${new Date(h.timestamp).toLocaleString('pt-BR')},${h.gas},${(h.ppm||0).toFixed(2)},${h.status}\n`; }); const blob=new Blob([csv],{type:'text/csv'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`esp32-dados-${Date.now()}.csv`; a.click(); }
+    function clearHistory(){ if(confirm('Tem certeza?')) fetch('/api/clear',{method:'POST'}).then(()=>{ history=[]; updateTable(); updateCharts(); }); }
+
+    document.addEventListener('DOMContentLoaded',()=>{ initCharts(); connectWS(); });
+  </script>
+</body>
+</html>
